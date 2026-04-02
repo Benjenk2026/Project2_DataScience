@@ -1,13 +1,19 @@
 # Project 2 Data Science - Unsupervised Learning
 
+## Contents 
+* [Go to Cleaning](#cleaning-pipeline)
+* [Go to k-means](#k-means-clustering-pipeline-k-meanspy)
+* [Go to PCA Pipeline](#pca-pipeline-pcapy)
+
+
 ## Dataset : UCI HIGGS Dataset 
 * https://archive.ics.uci.edu/dataset/280/higgs
 * Label = 1 → signal 
 * Label = 0 → background 
 * Features: 28 continuous physics-derived attributes 
 * Rows: 11,000,000 
+ For more detailed information about each feature see the original paper.
 
-The first column is the class label (1 for signal, 0 for background), followed by the 28 features (21 low-level features then 7 high-level features): lepton  pT, lepton  eta, lepton  phi, missing energy magnitude, missing energy phi, jet 1 pt, jet 1 eta, jet 1 phi, jet 1 b-tag, jet 2 pt, jet 2 eta, jet 2 phi, jet 2 b-tag, jet 3 pt, jet 3 eta, jet 3 phi, jet 3 b-tag, jet 4 pt, jet 4 eta, jet 4 phi, jet 4 b-tag, m_jj, m_jjj, m_lv, m_jlv, m_bb, m_wbb, m_wwbb. For more detailed information about each feature see the original paper.
 
 ## Cleaning Pipeline (cleaning.py)
 
@@ -138,4 +144,97 @@ Writes:
 - `--subsample-output`: output CSV for subsampled data (default `data/processed/higgs_200k.csv`)
 - `--justify-subsampling`: fixed benchmark at `50k/100k/200k` rows
 - `--justify-plot-output`: output image path for fixed benchmark plot (default `Analysis_and_Findings/subsample_justification.png`)
+
+## PCA Pipeline (PCA.py)
+
+The script `src/PCA.py` performs Principal Component Analysis on the cleaned HIGGS dataset and writes reduced-dimensional CSV files.
+
+### Main goals
+- Reduce 28-dimensional feature space into compact representations.
+- Support multiple PCA targets in one run.
+- Preserve `label` in outputs for downstream analysis/visualization.
+
+### Default behavior
+Running with no arguments:
+
+`python src/PCA.py`
+
+will:
+- Read `data/processed/higgs_cleaned.csv`
+- Validate `feature_1` through `feature_28`
+- Convert features to numeric and drop invalid rows
+- Standardize all 28 feature columns
+- Run PCA with `2`, `5`, and `10` components
+- Save outputs to:
+	- `data/processed/higgs_pca_2d.csv`
+	- `data/processed/higgs_pca_5d.csv`
+	- `data/processed/higgs_pca_10d.csv`
+- Print explained variance for each PCA run
+
+### Useful options
+- `--components`: comma-separated component counts (default `2,5,10`)
+- `--rows`: limit rows loaded for faster experiments
+- `--input`: input CSV path (default `data/processed/higgs_cleaned.csv`)
+- `--output-dir`: output directory (default `data/processed`)
+- `--random-state`: random seed (default `42`)
+
+### Example: run PCA on a subset
+
+`python src/PCA.py --rows 500000 --components 2,5,10`
+
+## Step-by-Step Run Order
+
+Use this order to run the full workflow from raw data to outputs.
+
+### 1) Install dependencies
+From the project root:
+
+`python -m pip install -r src/requirements.txt`
+
+### 2) Place raw HIGGS data
+Ensure the raw file exists at:
+
+`data/higgs/HIGGS.csv`
+
+### 3) Run cleaning first (required)
+For full dataset processing with lower memory pressure:
+
+`python src/cleaning.py --file higgs --chunked`
+
+Expected output:
+- `data/processed/higgs_cleaned.csv`
+
+### 4) Run PCA (after cleaning)
+Default required PCA outputs (2, 5, 10 components):
+
+`python src/PCA.py`
+
+Expected outputs:
+- `data/processed/higgs_pca_2d.csv`
+- `data/processed/higgs_pca_5d.csv`
+- `data/processed/higgs_pca_10d.csv`
+
+Optional faster trial on subset:
+
+`python src/PCA.py --rows 500000 --components 2,5,10`
+
+### 5) Run K-Means (after cleaning, optional PCA-independent branch)
+Baseline clustering on full feature set:
+
+`python src/k-means.py --k 2`
+
+Optional MiniBatch for speed:
+
+`python src/k-means.py --algorithm minibatch --rows 500000 --k 2`
+
+Expected output:
+- `data/processed/higgs_clustered.csv`
+
+### Recommended minimal command sequence
+If you only need the required PCA outputs and baseline clustering:
+
+1. `python -m pip install -r src/requirements.txt`
+2. `python src/cleaning.py --file higgs --chunked`
+3. `python src/PCA.py`
+4. `python src/k-means.py --k 2`
 
