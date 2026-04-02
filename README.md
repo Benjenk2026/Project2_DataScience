@@ -110,3 +110,32 @@ Benchmark mode:
 - `--benchmark-sizes`: comma-separated row counts to test
 - `--plot-output`: output image path for runtime plot (default `Analysis_and_Findings/runtime_vs_size.png`)
 
+### Subsampling workflow (single entrypoint)
+The same script now supports streamlined subsampling and fixed-size justification benchmarking directly.
+
+#### Create default 200k stratified subsample
+`python src/k-means.py --create-subsample`
+
+Writes:
+- `data/processed/higgs_200k.csv`
+
+#### Create custom-size subsample
+`python src/k-means.py --create-subsample --subsample-size 50000 --subsample-output data/processed/higgs_50k.csv`
+
+#### Run fixed subsampling justification benchmark (50k/100k/200k)
+`python src/k-means.py --justify-subsampling`
+
+Writes:
+- `Analysis_and_Findings/subsample_justification.png`
+
+#### Run benchmark and subsample in one command
+`python src/k-means.py --justify-subsampling --create-subsample --subsample-size 200000 --subsample-output data/processed/higgs_200k.csv`
+
+#### New subsampling-specific options
+- `--create-subsample`: create and save a stratified sample from input
+- `--subsample-size`: output row count for subsampling (default `200000`)
+- `--subsample-seed`: random seed for reproducible stratified sampling (default `42`)
+- `--subsample-output`: output CSV for subsampled data (default `data/processed/higgs_200k.csv`)
+- `--justify-subsampling`: fixed benchmark at `50k/100k/200k` rows
+- `--justify-plot-output`: output image path for fixed benchmark plot (default `Analysis_and_Findings/subsample_justification.png`)
+
