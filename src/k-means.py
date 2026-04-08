@@ -6,6 +6,8 @@ Usage examples:
 	python src/k-means.py
 	python src/k-means.py --algorithm minibatch --rows 500000
 	python src/k-means.py --benchmark-sizes 50000,100000,250000,500000
+	python src/k-means.py --justify-subsampling
+	python src/k-means.py --create-subsample --subsample-size 200000
 """
 
 import argparse
@@ -73,6 +75,40 @@ def parse_args() -> argparse.Namespace:
 		type=Path,
 		default=Path("Analysis_and_Findings/runtime_vs_size.png"),
 		help="Where to save runtime-vs-size plot in benchmark mode.",
+	)
+	parser.add_argument(
+		"--justify-subsampling",
+		action="store_true",
+		help="Run fixed 50k/100k/200k benchmark and save justification plot.",
+	)
+	parser.add_argument(
+		"--justify-plot-output",
+		type=Path,
+		default=Path("Analysis_and_Findings/subsample_justification.png"),
+		help="Where to save the fixed-size subsampling justification plot.",
+	)
+	parser.add_argument(
+		"--create-subsample",
+		action="store_true",
+		help="Create stratified subsample from input and save it to disk.",
+	)
+	parser.add_argument(
+		"--subsample-size",
+		type=int,
+		default=200_000,
+		help="Rows to keep when --create-subsample is used (default: 200000).",
+	)
+	parser.add_argument(
+		"--subsample-seed",
+		type=int,
+		default=42,
+		help="Random seed for stratified subsampling (default: 42).",
+	)
+	parser.add_argument(
+		"--subsample-output",
+		type=Path,
+		default=Path("data/processed/higgs_200k.csv"),
+		help="Output CSV for --create-subsample mode.",
 	)
 	return parser.parse_args()
 
@@ -148,6 +184,150 @@ def run_single_clustering(args: argparse.Namespace, df: pd.DataFrame) -> None:
 		print(f"  cluster {cluster_id}: {count:,}")
 
 
+def subsample_data(df: pd.DataFrame, n: int = 200000, seed: int = 42) -> pd.DataFrame:
+	"""
+	Stratified random sample from the full dataset, preserving label distribution.
+	
+	Args:
+		df: Input DataFrame with a 'label' column
+		n: Number of rows to sample (default: 200000)
+		seed: Random state for reproducibility (default: 42)
+	
+	Returns:
+		Subsampled DataFrame with stratification maintained
+	"""
+	if "label" not in df.columns:
+		raise ValueError("DataFrame must contain a 'label' column for stratified sampling")
+	
+	if n >= len(df):
+		print(f"Warning: requested sample size {n:,} >= dataset size {len(df):,}. Returning full dataset.")
+		return df.copy()
+	
+	# Calculate samples per label to maintain proportion
+	label_counts = df["label"].value_counts()
+	total_rows = len(df)
+	
+	# Stratified sample preserving label proportions
+	indices = []
+	for label_val, count in label_counts.items():
+		# Calculate how many samples for this label
+		n_per_label = max(1, int(n * count / total_rows))
+		label_df = df[df["label"] == label_val]
+		label_indices = label_df.sample(n=min(n_per_label, len(label_df)), random_state=seed).index
+		indices.extend(label_indices)
+	
+	subsampled = df.loc[indices].copy()
+	
+	# Ensure exact size by adjusting if necessary
+	if len(subsampled) != n:
+		if len(subsampled) > n:
+			subsampled = subsampled.sample(n=n, random_state=seed)
+		else:
+			# Add more samples if needed
+			needed = n - len(subsampled)
+			remaining = df[~df.index.isin(subsampled.index)]
+			extra = remaining.sample(n=min(needed, len(remaining)), random_state=seed)
+			subsampled = pd.concat([subsampled, extra], ignore_index=False)
+	
+	subsampled = subsampled.reset_index(drop=True)
+	print(f"Created stratified subsample: {len(subsampled):,} rows")
+	print(f"Label distribution:\n{subsampled['label'].value_counts(normalize=True).sort_index()}")
+	return subsampled
+
+
+def save_processed_data(df_sub: pd.DataFrame, output_path: Path = Path("data/processed/higgs_200k.csv")) -> None:
+	"""
+	Save cleaned subsample to disk for reproducibility.
+	
+	Args:
+		df_sub: Subsampled DataFrame to save
+		output_path: Where to save the CSV file (default: data/processed/higgs_200k.csv)
+	"""
+	output_path = Path(output_path)
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	df_sub.to_csv(output_path, index=False)
+	print(f"Saved subsample to: {output_path}")
+
+
+def justify_subsampling(
+	input_path: Path = Path("data/processed/higgs_cleaned.csv"),
+	output_path: Path = Path("Analysis_and_Findings/subsample_justification.png"),
+) -> None:
+	"""
+	Benchmark k-Means on 50k/100k/200k rows to justify use of subsampled dataset.
+	Plots runtime vs dataset size and saves to Analysis_and_Findings/subsample_justification.png
+	"""
+	input_path = Path(input_path)
+	output_path = Path(output_path)
+	if not input_path.exists():
+		raise FileNotFoundError(f"Input file not found: {input_path}")
+	
+	# Load only what we need for the largest benchmark
+	benchmark_sizes = [50_000, 100_000, 200_000]
+	max_size = max(benchmark_sizes)
+	
+	print(f"Loading {max_size:,} rows for benchmarking...")
+	df = pd.read_csv(input_path, low_memory=False, nrows=max_size)
+	df, X = prepare_numeric_features(df)
+	
+	available_rows = len(X)
+	
+	# Check which sizes are feasible
+	usable_sizes = [size for size in benchmark_sizes if size <= available_rows]
+	skipped_sizes = [size for size in benchmark_sizes if size > available_rows]
+	
+	if skipped_sizes:
+		print(f"Skipping sizes larger than available rows ({available_rows:,}): {skipped_sizes}")
+	
+	if not usable_sizes:
+		raise ValueError(f"No benchmark sizes <= available rows ({available_rows:,})")
+	
+	print(f"\nBenchmarking k-Means on {len(usable_sizes)} dataset sizes...")
+	runtimes = []
+	
+	for size in usable_sizes:
+		X_subset = X.iloc[:size]
+		
+		print(f"\n  Size {size:,} rows...")
+		start = perf_counter()
+		
+		# Standardize
+		scaler = StandardScaler()
+		X_scaled = scaler.fit_transform(X_subset)
+		
+		# Fit k-Means
+		model = KMeans(n_clusters=2, n_init=10, random_state=42)
+		model.fit(X_scaled)
+		
+		elapsed = perf_counter() - start
+		runtimes.append(elapsed)
+		print(f"    Runtime: {elapsed:.3f} seconds")
+	
+	# Plot and save
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	
+	plt.figure(figsize=(10, 6))
+	plt.plot(usable_sizes, runtimes, marker="o", linewidth=2, markersize=8, color="steelblue")
+	plt.title("k-Means Runtime vs Dataset Size\nJustifying 200k Subsample", fontsize=14, fontweight="bold")
+	plt.xlabel("Dataset Size (rows)", fontsize=12)
+	plt.ylabel("Runtime (seconds)", fontsize=12)
+	plt.grid(True, alpha=0.3)
+	
+	# Add value labels on points
+	for size, runtime in zip(usable_sizes, runtimes):
+		plt.annotate(f"{runtime:.2f}s", xy=(size, runtime), xytext=(0, 10),
+					textcoords="offset points", ha="center", fontsize=10)
+	
+	plt.tight_layout()
+	plt.savefig(output_path, dpi=300, bbox_inches="tight")
+	plt.close()
+	
+	print(f"\n✓ Saved benchmark plot to: {output_path}")
+	print("\nSummary:")
+	for size, runtime in zip(usable_sizes, runtimes):
+		print(f"  {size:,} rows: {runtime:.3f}s")
+
+
 def run_runtime_benchmark(args: argparse.Namespace, df: pd.DataFrame) -> None:
 	sizes = parse_benchmark_sizes(args.benchmark_sizes)
 
@@ -194,6 +374,21 @@ def main() -> None:
 
 	if not args.input.exists():
 		raise FileNotFoundError(f"Input file not found: {args.input}")
+
+	if args.subsample_size <= 0:
+		raise ValueError("--subsample-size must be a positive integer.")
+
+	if args.justify_subsampling:
+		justify_subsampling(input_path=args.input, output_path=args.justify_plot_output)
+		if not args.create_subsample:
+			return
+
+	if args.create_subsample:
+		print(f"Loading: {args.input}")
+		df = pd.read_csv(args.input, low_memory=False)
+		df_sub = subsample_data(df, n=args.subsample_size, seed=args.subsample_seed)
+		save_processed_data(df_sub, output_path=args.subsample_output)
+		return
 
 	print(f"Loading: {args.input}")
 	if args.benchmark_sizes:
