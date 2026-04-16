@@ -117,11 +117,6 @@ def iter_csv_chunks(file_path: Path, chunk_size: int):
 # STANDARDIZE COLUMN NAMES
 # Required: consistent snake_case names
 
-_ALIASES = {
-    "lat": "latitude", "long": "longitude", "lon": "longitude",
-    "zip": "zipcode",  "postal_code": "zipcode",
-}
-
 def to_snake_case(name: str) -> str:
     s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", str(name))
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
@@ -133,7 +128,6 @@ def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize column names to snake_case and resolve common aliases."""
     df = df.copy()
     df.columns = [to_snake_case(c) for c in df.columns]
-    df = df.rename(columns={c: _ALIASES.get(c, c) for c in df.columns})
     text_cols = [
         col for col in df.columns
         if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])
@@ -195,85 +189,6 @@ def flag_higgs_outliers(df: pd.DataFrame) -> pd.DataFrame:
     flagged_rows = int(df["has_outlier"].sum())
     print(f"  Flagged outliers in {flagged_rows:,} rows")
     return df
-
-
-# COMPLAINT TYPE NORMALIZATION  (311 only)
-# Required: case folding, trimming, consistent labels
-
-_COMPLAINT_RULES = [
-    (r"\bpotholes?\b",                         "potholes"),
-    (r"\btrash\b|\brubbish\b|\bgarbage\b",     "trash"),
-    (r"\bnoise\b",                             "noise"),
-    (r"\bstreet\s*lights?\b|\blight\s*out\b", "street lights"),
-    (r"\bparking\b",                           "parking"),
-    (r"\bgraffiti\b",                          "graffiti"),
-    (r"\bwater\b",                             "water"),
-    (r"\bsidewalk\b",                          "sidewalk"),
-    (r"\brat\b|\brodent\b",                    "rodents"),
-    (r"\btree\b",                              "trees"),
-]
-
-def normalize_complaint_type(value) -> str:
-    """Lowercase + trim + apply rule-based label mapping."""
-    if pd.isna(value):
-        return ""
-    s = re.sub(r"\s+", " ", str(value).strip().casefold())
-    for pattern, label in _COMPLAINT_RULES:
-        if re.search(pattern, s):
-            return label
-    return s
-
-
-# YELP CATEGORY NORMALIZATION  (yelp_business only)
-# Required: string matching and grouping rules
-
-_CATEGORY_RULES = [
-    ("public",      ["public services & government", "government", "post office",
-                     "police", "fire station", "city hall", "public library"]),
-    ("restaurants", ["restaurant", "food", "pizza", "cafe", "coffee",
-                     "burger", "sushi", "diner", "bakery", "seafood"]),
-    ("nightlife",   ["nightlife", "pub", "cocktail", "club", "brewery",
-                     "wine bar", "bars"]),
-    ("retail",      ["shopping", "retail", "grocery", "market", "store", "clothing"]),
-    ("services",    ["service", "repair", "salon", "beauty", "spa",
-                     "cleaning", "plumbing", "contractor"]),
-    ("health",      ["doctor", "dentist", "medical", "health", "pharmacy",
-                     "hospital", "fitness", "gym"]),
-    ("auto",        ["auto", "car", "tire", "mechanic"]),
-]
-
-def normalize_yelp_categories(value) -> tuple:
-    """Return (categories_clean, broad_category) for a Yelp category string."""
-    if pd.isna(value):
-        return "", "other"
-    cats = [c.strip().lower() for c in str(value).split(",") if c.strip()]
-    broad = "other"
-    for broad_name, keywords in _CATEGORY_RULES:
-        if any(any(k in c for k in keywords) for c in cats):
-            broad = broad_name
-            break
-    return ", ".join(cats), broad
-
-
-# LOCATION CLEANING
-# Required: clean lat/lon and ZIP codes
-
-def clean_location(df: pd.DataFrame) -> pd.DataFrame:
-    """Coerce lat/lon to numeric, null impossible values, extract 5-digit ZIPs."""
-    df = df.copy()
-    if "latitude" in df.columns:
-        df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-        df.loc[df["latitude"].abs() > 90, "latitude"] = pd.NA
-    if "longitude" in df.columns:
-        df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-        df.loc[df["longitude"].abs() > 180, "longitude"] = pd.NA
-    if "zipcode" in df.columns:
-        df["zipcode"] = (df["zipcode"].astype("string")
-                         .str.replace(r"\.0$", "", regex=True)
-                         .str.extract(r"(\d{5})", expand=False)
-                         .astype("string"))
-    return df
-
 
 # MISSING VALUES
 # Required: documented drop and impute strategies
@@ -345,19 +260,6 @@ def _clean_chunk(df: pd.DataFrame, name: str, cfg: dict) -> pd.DataFrame:
 
     if name == "higgs":
         df = enforce_higgs_numeric_features(df)
-
-    if name == "311":
-        source = next((c for c in ["subject", "service_name", "service_notice"]
-                       if c in df.columns), None)
-        if source:
-            df["complaint_type"] = df[source].map(normalize_complaint_type)
-        df = clean_location(df)
-    elif name == "yelp_business":
-        if "categories" in df.columns:
-            results = df["categories"].map(normalize_yelp_categories)
-            df["categories_clean"] = results.map(lambda x: x[0])
-            df["broad_category"]   = results.map(lambda x: x[1])
-        df = clean_location(df)
 
     # Drop rows missing critical columns
     if cfg["drop_rows"]:
@@ -448,20 +350,6 @@ def clean_file(name: str) -> pd.DataFrame:
     if name == "higgs":
         df = enforce_higgs_numeric_features(df)
 
-    # 2. Dataset-specific enrichment
-    if name == "311":
-        source = next((c for c in ["subject", "service_name", "service_notice"]
-                       if c in df.columns), None)
-        if source:
-            df["complaint_type"] = df[source].map(normalize_complaint_type)
-        df = clean_location(df)
-
-    elif name == "yelp_business":
-        if "categories" in df.columns:
-            results = df["categories"].map(normalize_yelp_categories)
-            df["categories_clean"] = results.map(lambda x: x[0])
-            df["broad_category"]   = results.map(lambda x: x[1])
-        df = clean_location(df)
 
     # 3. Handle missing values
     df = handle_missing_values(df, drop_rows=cfg["drop_rows"], impute=cfg["impute"])
