@@ -369,24 +369,59 @@ This is a quick way to see which representation produced the best clustering qua
 
 ### Commands used in this project
 
-200k rows:
-`python src/cluster_pca_compare.py --algorithm minibatch --rows 200000 --k 2 --output-dir Analysis_and_Findings/pca_kmeans_comparison_200k --cluster-output-dir data/processed/pca_kmeans_clusters_200k`
+Full pipeline for each size (PCA → K-Means baseline → size-specific comparison):
 
-500k rows:
-`python src/cluster_pca_compare.py --algorithm minibatch --rows 500000 --k 2 --output-dir Analysis_and_Findings/pca_kmeans_comparison_500k --cluster-output-dir data/processed/pca_kmeans_clusters_500k`
+**200k rows:**
+```bash
+python src/PCA.py --rows 200000 --output-dir data/processed/pca_200k
+python src/k-means.py --algorithm minibatch --rows 200000 --k 2 --output data/processed/higgs_clustered_200k.csv
+python src/cluster_pca_compare.py --algorithm minibatch --rows 200000 --k 2 --silhouette-sample 50000 \
+  --output-dir Analysis_and_Findings/pca_kmeans_comparison_200k \
+  --cluster-output-dir data/processed/pca_kmeans_clusters_200k \
+  --pca-2d-path data/processed/pca_200k/higgs_pca_2d.csv \
+  --pca-5d-path data/processed/pca_200k/higgs_pca_5d.csv \
+  --pca-10d-path data/processed/pca_200k/higgs_pca_10d.csv
+```
 
-1M rows:
-`python src/cluster_pca_compare.py --algorithm minibatch --rows 1000000 --k 2 --output-dir Analysis_and_Findings/pca_kmeans_comparison_1m --cluster-output-dir data/processed/pca_kmeans_clusters_1m`
+**500k rows:**
+```bash
+python src/PCA.py --rows 500000 --output-dir data/processed/pca_500k
+python src/k-means.py --algorithm minibatch --rows 500000 --k 2 --output data/processed/higgs_clustered_500k.csv
+python src/cluster_pca_compare.py --algorithm minibatch --rows 500000 --k 2 --silhouette-sample 50000 \
+  --output-dir Analysis_and_Findings/pca_kmeans_comparison_500k \
+  --cluster-output-dir data/processed/pca_kmeans_clusters_500k \
+  --pca-2d-path data/processed/pca_500k/higgs_pca_2d.csv \
+  --pca-5d-path data/processed/pca_500k/higgs_pca_5d.csv \
+  --pca-10d-path data/processed/pca_500k/higgs_pca_10d.csv
+```
 
+**1M rows:**
+```bash
+python src/PCA.py --rows 1000000 --output-dir data/processed/pca_1m
+python src/k-means.py --algorithm minibatch --rows 1000000 --k 2 --output data/processed/higgs_clustered_1m.csv
+python src/cluster_pca_compare.py --algorithm minibatch --rows 1000000 --k 2 --silhouette-sample 20000 \
+  --output-dir Analysis_and_Findings/pca_kmeans_comparison_1m \
+  --cluster-output-dir data/processed/pca_kmeans_clusters_1m \
+  --pca-2d-path data/processed/pca_1m/higgs_pca_2d.csv \
+  --pca-5d-path data/processed/pca_1m/higgs_pca_5d.csv \
+  --pca-10d-path data/processed/pca_1m/higgs_pca_10d.csv
+```
 
-### Current 200k summary snapshot (MiniBatch, k=2)
+### Results Summary: Clustering Quality Across Dataset Sizes
 
-- `original_28d`: silhouette `0.1815`, DBI `2.7934`
-- `pca_2d`: silhouette `0.3517`, DBI `1.1369`
-- `pca_5d`: silhouette `0.1854`, DBI `2.0516`
-- `pca_10d`: silhouette `0.0963`, DBI `3.0828`
+**Merged comparison table:** [Analysis_and_Findings/pca_kmeans_comparison_all_sizes.csv](Analysis_and_Findings/pca_kmeans_comparison_all_sizes.csv)
 
-In this run, PCA 2D gave the strongest clustering quality by both silhouette and Davies-Bouldin.
+**Comparison plot (silhouette & DBI trends):** [Analysis_and_Findings/pca_kmeans_comparison_across_sizes.png](Analysis_and_Findings/pca_kmeans_comparison_across_sizes.png)
+
+#### Key findings across 200k, 500k, and 1M:
+
+| Size | Best Dataset | Silhouette | DBI |
+|------|-------------|-----------|-----|
+| **200k** | `pca_2d` | 0.3515 | 1.1333 |
+| **500k** | `pca_2d` | 0.3547 | 1.1393 |
+| **1M** | `pca_2d` | 0.3497 | 1.1299 |
+
+PCA 2D consistently delivered the strongest clustering quality across all sizes. Original 28D features performed worst (lowest silhouette, highest DBI), while PCA 5D and 10D showed intermediate performance. This demonstrates that aggressive dimensionality reduction to 2D captures the most meaningful structure for k=2 clustering on HIGGS data.
 
 ### Troubleshooting: full-data run fails (`--rows` omitted)
 
