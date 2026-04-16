@@ -130,11 +130,16 @@ Writes:
 #### Create custom-size subsample
 `python src/k-means.py --create-subsample --subsample-size 50000 --subsample-output data/processed/higgs_50k.csv`
 
-#### Run fixed subsampling justification benchmark (50k/100k/200k)
+#### Run fixed subsampling justification benchmark (50k/100k/200k/1M)
 `python src/k-means.py --justify-subsampling`
 
 Writes:
 - `Analysis_and_Findings/subsample_justification.png`
+
+The justification plot:
+- benchmarks `50k`, `100k`, `200k`, and `1,000,000` rows
+- uses the first `N` validated rows from `data/processed/higgs_cleaned.csv` for each point
+- runs one untimed warm-up pass, then records the median of 3 timed runs to reduce one-time startup noise
 
 #### Run benchmark and subsample in one command
 `python src/k-means.py --justify-subsampling --create-subsample --subsample-size 200000 --subsample-output data/processed/higgs_200k.csv`

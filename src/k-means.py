@@ -12,6 +12,7 @@ Usage examples:
 
 import argparse
 from pathlib import Path
+from statistics import median
 from time import perf_counter
 
 import matplotlib.pyplot as plt
@@ -159,6 +160,29 @@ def prepare_numeric_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFra
 	return df.loc[valid_mask].copy(), X.loc[valid_mask]
 
 
+def benchmark_kmeans_runtime(X_subset: pd.DataFrame, repeats: int = 3) -> tuple[float, list[float]]:
+	"""
+	Measure k-Means runtime on a fixed feature subset.
+
+	Runs one untimed warm-up pass to avoid counting one-time sklearn/BLAS startup
+	overhead, then reports the median across repeated timed runs.
+	"""
+	scaler = StandardScaler()
+	X_scaled = scaler.fit_transform(X_subset)
+	KMeans(n_clusters=2, n_init=10, random_state=42).fit(X_scaled)
+
+	runs = []
+	for _ in range(repeats):
+		start = perf_counter()
+		scaler = StandardScaler()
+		X_scaled = scaler.fit_transform(X_subset)
+		model = KMeans(n_clusters=2, n_init=10, random_state=42)
+		model.fit(X_scaled)
+		runs.append(perf_counter() - start)
+
+	return median(runs), runs
+
+
 def run_single_clustering(args: argparse.Namespace, df: pd.DataFrame) -> None:
 	df, X = prepare_numeric_features(df)
 
@@ -254,7 +278,7 @@ def justify_subsampling(
 	output_path: Path = Path("Analysis_and_Findings/subsample_justification.png"),
 ) -> None:
 	"""
-	Benchmark k-Means on 50k/100k/200k rows to justify use of subsampled dataset.
+	Benchmark k-Means on 50k/100k/200k/1M rows to justify use of subsampled dataset.
 	Plots runtime vs dataset size and saves to Analysis_and_Findings/subsample_justification.png
 	"""
 	input_path = Path(input_path)
@@ -263,7 +287,7 @@ def justify_subsampling(
 		raise FileNotFoundError(f"Input file not found: {input_path}")
 	
 	# Load only what we need for the largest benchmark
-	benchmark_sizes = [50_000, 100_000, 200_000]
+	benchmark_sizes = [50_000, 100_000, 200_000, 1_000_000]
 	max_size = max(benchmark_sizes)
 	
 	print(f"Loading {max_size:,} rows for benchmarking...")
@@ -283,34 +307,32 @@ def justify_subsampling(
 		raise ValueError(f"No benchmark sizes <= available rows ({available_rows:,})")
 	
 	print(f"\nBenchmarking k-Means on {len(usable_sizes)} dataset sizes...")
+	print(
+		f"Using contiguous prefixes from {input_path} after numeric validation: "
+		f"rows 1..N of the cleaned feature matrix."
+	)
 	runtimes = []
+	raw_timings = {}
 	
 	for size in usable_sizes:
 		X_subset = X.iloc[:size]
 		
-		print(f"\n  Size {size:,} rows...")
-		start = perf_counter()
-		
-		# Standardize
-		scaler = StandardScaler()
-		X_scaled = scaler.fit_transform(X_subset)
-		
-		# Fit k-Means
-		model = KMeans(n_clusters=2, n_init=10, random_state=42)
-		model.fit(X_scaled)
-		
-		elapsed = perf_counter() - start
+		print(f"\n  Size {size:,} rows (using validated rows 1..{size:,})...")
+		elapsed, runs = benchmark_kmeans_runtime(X_subset)
 		runtimes.append(elapsed)
-		print(f"    Runtime: {elapsed:.3f} seconds")
+		raw_timings[size] = runs
+		formatted_runs = ", ".join(f"{run:.3f}s" for run in runs)
+		print(f"    Timed runs: {formatted_runs}")
+		print(f"    Median runtime: {elapsed:.3f} seconds")
 	
 	# Plot and save
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 	
 	plt.figure(figsize=(10, 6))
 	plt.plot(usable_sizes, runtimes, marker="o", linewidth=2, markersize=8, color="steelblue")
-	plt.title("k-Means Runtime vs Dataset Size\nJustifying 200k Subsample", fontsize=14, fontweight="bold")
+	plt.title("k-Means Runtime vs Dataset Size\n50k, 100k, 200k, and 1M Rows", fontsize=14, fontweight="bold")
 	plt.xlabel("Dataset Size (rows)", fontsize=12)
-	plt.ylabel("Runtime (seconds)", fontsize=12)
+	plt.ylabel("Median runtime over 3 timed runs (seconds)", fontsize=12)
 	plt.grid(True, alpha=0.3)
 	
 	# Add value labels on points
@@ -325,7 +347,8 @@ def justify_subsampling(
 	print(f"\n✓ Saved benchmark plot to: {output_path}")
 	print("\nSummary:")
 	for size, runtime in zip(usable_sizes, runtimes):
-		print(f"  {size:,} rows: {runtime:.3f}s")
+		formatted_runs = ", ".join(f"{run:.3f}s" for run in raw_timings[size])
+		print(f"  {size:,} rows: median {runtime:.3f}s from [{formatted_runs}]")
 
 
 def run_runtime_benchmark(args: argparse.Namespace, df: pd.DataFrame) -> None:
